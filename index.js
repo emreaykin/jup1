@@ -6,38 +6,90 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 const app = express();
 const port = 3000;
 
+/** 
+ * Sayaçlar (global veya module-scope)
+ * Her saniyede bir sıfırlanacak.
+ */
+let successCount = 0;
+let timeoutCount = 0;
+let errorCount = 0;
+
+// Her 1 saniyede bir sayaçları loglayıp sıfırlıyoruz
+setInterval(() => {
+  console.log(
+    `Last second stats => success: ${successCount}, timeout: ${timeoutCount}, error: ${errorCount}`
+  );
+  successCount = 0;
+  timeoutCount = 0;
+  errorCount = 0;
+}, 1000);
+
 /**
  * Belirtilen dosyadan proxy listesini okuyup dizi olarak döndüren fonksiyon.
  * (Dosyadaki her satır: host:port:username:password formatında olmalıdır)
  */
-const loadProxiesFromFile = (filePath) => {
+function loadProxiesFromFile(filePath) {
   return fs.readFileSync(filePath, "utf-8")
     .split("\n")
     .map(line => line.trim())
     .filter(Boolean);
-};
+}
 
 /**
- * Tek bir proxy üzerinden istek yapan fonksiyon.
+ * Tek bir proxy için sonsuz döngüde istek atılması fonksiyonu.
+ * - Her istek en fazla 1 saniye bekler (Timeout).
+ * - Eğer 1 saniyeden erken başarı sağlanırsa, geri kalan süreyi (1s - geçen süre) kadar bekler.
+ * - Eğer 1 saniyede yanıt gelmezse direkt yeni isteğe geçilir (çünkü zaten 1 saniye dolmuş olur).
  */
-const makeRequest = async (url, proxy) => {
-  const agent = new HttpsProxyAgent(proxy);
-  const startTime = Date.now();
+async function startProxyLoop(url, proxyUrl) {
+  const agent = new HttpsProxyAgent(proxyUrl);
 
-  try {
-    await fetch(url, { agent }); // Sadece istek yapılıyor, gelen cevabı kullanmıyoruz
-    const endTime = Date.now();
-    console.log(`Request completed via proxy ${proxy} in ${endTime - startTime} ms`);
-  } catch (error) {
-    console.error(`Error with proxy ${proxy}:`, error.message);
+  while (true) {
+    const startTime = Date.now();
+
+    // 1) AbortController -> 1sn'de abort olacak
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort(); // 1 saniye dolunca isteği iptal et
+    }, 1000);
+
+    try {
+      await fetch(url, {
+        agent,
+        signal: controller.signal, // Timeout kontrolü
+      });
+      // Başarılı istek => sayacı artır
+      successCount++;
+    } catch (error) {
+      if (error.name === "AbortError") {
+        // 1 saniyede yanıt gelmedi => timeout
+        timeoutCount++;
+      } else {
+        // Fetch hatası
+        errorCount++;
+      }
+    } finally {
+      // 2) Her halükarda setTimeout'u temizliyoruz
+      clearTimeout(timeoutId);
+
+      // 3) Geçen süreyi hesapla
+      const elapsed = Date.now() - startTime;
+      const waitTime = 1000 - elapsed;
+
+      // 4) Eğer 1sn'den erken bitmişse kalan süre bekle
+      if (waitTime > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
   }
-};
+}
 
 /**
- * Belirtilen dosyadaki tüm proxy'leri kullanarak
- * toplu şekilde istek yapan fonksiyon.
+ * Dosyadaki tüm proxy'ler için sonsuz döngüde istek atılmasını başlatan fonksiyon.
+ * - Tüm proxy'ler için EŞZAMANLI (paralel) olarak startProxyLoop başlıyor.
+ * - Bu şekilde hiçbir proxy diğerini beklemeyecek.
  */
-const testProxies = async (filePath) => {
+function testProxies(filePath) {
   const proxies = loadProxiesFromFile(filePath);
   if (proxies.length === 0) {
     console.error("Proxy listesi boş. İstekler yapılmayacak.");
@@ -45,32 +97,35 @@ const testProxies = async (filePath) => {
   }
 
   // Test edilecek örnek URL
-  const url = "https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=100000000&slippageBps=50";
+  const url =
+    "https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=100000000&slippageBps=50";
 
-  // Promise.all ile tüm proxy isteklerini paralel çalıştırıyoruz
-  const requests = proxies.map(proxyLine => {
+  proxies.forEach(proxyLine => {
     const [host, port, username, password] = proxyLine.split(":");
     const proxyUrl = `http://${username}:${password}@${host}:${port}`;
-    return makeRequest(url, proxyUrl);
-  });
 
-  await Promise.all(requests);
-};
+    // Her proxy için ayrı bir sonsuz döngü başlatıyoruz
+    startProxyLoop(url, proxyUrl).catch(err => {
+      // Bu döngüde oluşan beklenmeyen hataları yakalamak için
+      console.error("startProxyLoop hatası:", err);
+    });
+  });
+}
 
 /**
- * /test1 endpoint'i --> proxy.txt dosyasını kullanarak test yapar
+ * /test1 endpoint'i --> proxy.txt dosyasını kullanarak sonsuz döngüde istekler başlatır
  */
-app.get("/test1", async (req, res) => {
-  await testProxies("./proxy.txt");
-  return res.send("test1 api çalışıyor");
+app.get("/test1", (req, res) => {
+  testProxies("./proxy.txt");
+  return res.send("test1 api çalışıyor => Süresiz istekler başlatıldı.");
 });
 
 /**
- * /test2 endpoint'i --> proxy2.txt dosyasını kullanarak test yapar
+ * /test2 endpoint'i --> proxy2.txt dosyasını kullanarak sonsuz döngüde istekler başlatır
  */
-app.get("/test2", async (req, res) => {
-  await testProxies("./proxy2.txt");
-  return res.send("test2 api çalışıyor");
+app.get("/test2", (req, res) => {
+  testProxies("./proxy2.txt");
+  return res.send("test2 api çalışıyor => Süresiz istekler başlatıldı.");
 });
 
 // Sunucuyu başlat
