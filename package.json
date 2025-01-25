@@ -1,0 +1,19 @@
+{
+  "name": "node-fetch-example",
+  "version": "1.0.0",
+  "description": "Two independent API requests using Node.js",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cross-fetch": "^3.1.5",
+    "express": "^4.21.2",
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
