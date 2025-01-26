@@ -2,6 +2,7 @@ import express from "express";
 import fs from "fs";
 import fetch from "node-fetch";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { monitorEventLoopDelay } from "perf_hooks"; // Event loop gecikmesini ölçmek için
 
 const app = express();
 const port = 3000;
@@ -14,14 +15,20 @@ let successCount = 0;
 let timeoutCount = 0;
 let errorCount = 0;
 
-// Her 1 saniyede bir sayaçları loglayıp sıfırlıyoruz
+// Event loop gecikme ölçümü
+const histogram = monitorEventLoopDelay();
+histogram.enable();
+
+// Her 1 saniyede bir sayaçları ve event loop gecikmesini loglayıp sayaçları sıfırlıyoruz
 setInterval(() => {
   console.log(
     `Last second stats => success: ${successCount}, timeout: ${timeoutCount}, error: ${errorCount}`
   );
+  console.log(`Event Loop Delay: avg = ${(histogram.mean / 1e6).toFixed(2)} ms, max = ${(histogram.max / 1e6).toFixed(2)} ms`);
   successCount = 0;
   timeoutCount = 0;
   errorCount = 0;
+  histogram.reset(); // Histogramı sıfırlıyoruz
 }, 1000);
 
 /**
