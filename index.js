@@ -58,7 +58,7 @@ async function startProxyLoop(url, proxyUrl) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort(); // 1 saniye dolunca isteği iptal et
-    }, 1500);
+    }, 1250);
 
     try {
       await fetch(url, {
@@ -81,7 +81,7 @@ async function startProxyLoop(url, proxyUrl) {
 
       // 3) Geçen süreyi hesapla
       const elapsed = Date.now() - startTime;
-      const waitTime = 1500 - elapsed;
+      const waitTime = 1250 - elapsed;
 
       // 4) Eğer 1sn'den erken bitmişse kalan süre bekle
       if (waitTime > 0) {
